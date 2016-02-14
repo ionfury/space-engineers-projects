@@ -3,7 +3,7 @@ const string AIRLOCKNAME = "##NAME##";
 const string INTERIORAIRLOCKTAG = "dontusethis";
 const string EXTERIORAIRLOCKTAG = "Exterior";
 
-const double DOORTIMEOUT = 4.0;
+const double AIRLOCKDELAY = 4.0;
 
 Color LIGHT_PRESSURIZED = Color.AntiqueWhite;
 Color LIGHT_DEPRESSURIZED = Color.Firebrick;
@@ -11,6 +11,9 @@ Color LIGHT_CHANGING = Color.Goldenrod;
 Color LIGHT_LOCKDOWN = Color.Firebrick;
 
 const bool DEBUGMODE = true;
+
+Airlock airlock;
+bool init = false;
 
 void Main(string arg)
 {
@@ -23,7 +26,12 @@ void Main(string arg)
 	}
 	DateTime timestamp = DateTime.Now;
 	DebugPrint(timestamp.ToString(), Echo);
-	var airlock = new Airlock("primary", this);
+	
+	if(!init)
+	{
+		airlock = new Airlock("primary", this);
+	}
+	airlock.HandleState();
 }
 
 public class Airlock
@@ -35,6 +43,7 @@ public class Airlock
 	private List<IMyOxygenTank> _tanks;
 	private List<IMyLightingBlock> _lights;
 	private Program SpaceEngineers;
+	private DateTime _lastAction;
 	
 	private int _state;
 	
@@ -44,6 +53,7 @@ public class Airlock
 		DebugPrint("MyAirlock('" + name + "')", SpaceEngineers.Echo);
 		_name = name;
 		_state = -1;
+		_lastAction = DateTime.Now;
 		
 		_interiorDoors = new List<IMyDoor>();
 		_exteriorDoors = new List<IMyDoor>();
@@ -103,22 +113,22 @@ public class Airlock
 		switch(_state)
 		{
 			case AirlockState.Open:
-				_state = OpenInterior();
+				Open();
 				break;
 			case AirlockState.Pressurized:
-			  _state = Pressurized();
+			  Pressurized();
 				break;
 			case AirlockState.Draining:
-			  _state = Draining();
+			  Draining();
 				break;
 			case AirlockState.Depressurized:
-			  _state = Depressurized();
+			  Depressurized();
 				break;
 			case AirlockState.Filling:
-			  _state = Filling();
+			  Filling();
 				break;
 			case AirlockState.Lockdown:
-				_state = Lockdown();
+				Lockdown();
 				break;
 			default:
 			 
@@ -126,42 +136,100 @@ public class Airlock
 		}
 	}
 	
-	private int Open()
-	{		
-	  bool
-		foreach(var interiorDoor in _interiorDoors)
+	// If the airlock is open, freeze all functions and wait DELAY, then drain.
+	private void Open()
+	{
+		DebugPrint("Open()", SpaceEngineers.Echo);
+		bool nextState = true;
+		foreach(var door in _exteriorDoors)
 		{
-			
+			if(door.OpenRatio > 0.0)
+			{
+				door.ApplyAction(IMyDoorActions.Close);
+				nextState = false;
+			}
+			else
+			{
+				door.ApplyAction(IMyTerminalBlockActions.Off);
+			}
+		}
+				
+	  if(DateTime.Now > _lastAction.AddSeconds(AIRLOCKDELAY) && nextState)
+		{
+			_lastAction = DateTime.Now;
+			_state = AirlockState.Draining;
 		}
 	}
 	
-	private int Pressurized()
-	{}
 	
-	private int Draining()
-	{}
+	private void Pressurized()
+	{;}
 	
-	private int Depressurized()
-	{}
+	// Wait till the airlock is empty of oxygen, then depressurized
+	private void Draining()
+	{
+		DebugPrint("Draining()", SpaceEngineers.Echo);
+		var nextState = true;
+		foreach(var vent in _vents)
+		{
+			vent.ApplyAction(IMyTerminalBlockActions.On);
+			vent.ApplyAction(IMyAirVentActions.Drain);
+			
+			if(vent.GetOxygenLevel() > 0.0)
+			{
+				nextState = false;
+			}
+		}
+		
+		if(nextState)
+		{
+			_state = AirlockState.Depressurized;
+		}
+	}
 	
-	private int Filling()
+	// Wait here until something happens
+	private void Depressurized()
+	{
+		DebugPrint("Depressurized", SpaceEngineers.Echo);
+		bool nextState = false;
+		foreach(var door in _exteriorDoors)
+		{
+			if(door.OpenRatio > 0.0)
+			{
+				nextState = true;
+			}
+		}
+		
+		foreach(var vent in _vents)
+		{
+			vent.ApplyAction(IMyTerminalBlockActions.Off);
+		}
+		
+		if(nextState)
+		{
+			_state = AirlockState.Open;
+		}
+	}
+	
+	
+	private void Filling()
 	{}
 
-	private int Lockdown()
+	private void Lockdown()
 	{
 		foreach(var door in _exteriorDoors)
 		{
 			if(door.OpenRatio > 0.0)
-			  door.ApplyAction(DoorActions.Close);
+			  door.ApplyAction(IMyDoorActions.Close);
 			else
-				door.ApplyAction(BlockActions.Off);
+				door.ApplyAction(IMyTerminalBlockActions.Off);
 		}
 		foreach(var door in _interiorDoors)
 		{
 			if(door.OpenRatio > 0.0)
-			  door.ApplyAction(DoorActions.Close);
+			  door.ApplyAction(IMyDoorActions.Close);
 			else
-				door.ApplyAction(BlockActions.Off);
+				door.ApplyAction(IMyTerminalBlockActions.Off);
 		}
 		foreach(var light in _lights)
 		{
@@ -230,7 +298,7 @@ public bool IsMyGrid(IMyTerminalBlock block)
 /// Fuck why don't enums work
 static class AirlockState 
 {
-	public const int OpenInterior = 0;
+	public const int Open = 0;
 	public const int Pressurized = 1;
 	public const int Draining = 2;
 	public const int Depressurized = 3;
