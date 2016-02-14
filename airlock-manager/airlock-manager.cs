@@ -30,6 +30,7 @@ void Main(string arg)
 	if(!init)
 	{
 		airlock = new Airlock("primary", this);
+		init = true;
 	}
 	airlock.HandleState();
 }
@@ -108,7 +109,7 @@ public class Airlock
 
 	public void HandleState()
 	{
-		DebugPrint("HandleState()", SpaceEngineers.Echo);
+		DebugPrint("HandleState() - " + _lastAction.ToString(), SpaceEngineers.Echo);
 		
 		switch(_state)
 		{
@@ -131,7 +132,7 @@ public class Airlock
 				Lockdown();
 				break;
 			default:
-			 
+			  _state = AirlockState.Depressurized;
 			  break;
 		}
 	}
@@ -143,46 +144,69 @@ public class Airlock
 		bool nextState = true;
 		foreach(var door in _exteriorDoors)
 		{
-			if(door.OpenRatio > 0.0)
-			{
-				door.ApplyAction(IMyDoorActions.Close);
-				nextState = false;
-			}
-			else
+			if(door.OpenRatio == 0.0)
 			{
 				door.ApplyAction(IMyTerminalBlockActions.Off);
 			}
 		}
 				
-	  if(DateTime.Now > _lastAction.AddSeconds(AIRLOCKDELAY) && nextState)
+	  if(nextState && DateTime.Now > _lastAction.AddSeconds(AIRLOCKDELAY))
+		{
+			_lastAction = DateTime.Now;
+			_state = AirlockState.Pressurized;
+		}
+	}
+	
+	
+	private void Pressurized()
+	{
+		bool nextState = true;
+		
+		foreach(var door in _exteriorDoors)
+		{
+			if(door.OpenRatio > 0.0)
+			{
+				nextState = false;
+				door.ApplyAction(IMyDoorActions.Close);
+				door.ApplyAction(IMyTerminalBlockActions.On);
+			}
+			else
+			{
+				door.ApplyAction(IMyDoorActions.Close);
+				door.ApplyAction(IMyTerminalBlockActions.Off);
+			}
+		}
+		
+		if(nextState)
 		{
 			_lastAction = DateTime.Now;
 			_state = AirlockState.Draining;
 		}
 	}
 	
-	
-	private void Pressurized()
-	{;}
-	
 	// Wait till the airlock is empty of oxygen, then depressurized
 	private void Draining()
 	{
 		DebugPrint("Draining()", SpaceEngineers.Echo);
 		var nextState = true;
+		
+		foreach(var door in _exteriorDoors)
+		{
+			door.ApplyAction(IMyDoorActions.Close);
+			door.ApplyAction(IMyTerminalBlockActions.Off);
+		}
+		
 		foreach(var vent in _vents)
 		{
 			vent.ApplyAction(IMyTerminalBlockActions.On);
 			vent.ApplyAction(IMyAirVentActions.Drain);
-			
-			if(vent.GetOxygenLevel() > 0.0)
-			{
-				nextState = false;
-			}
 		}
+		
+		if(_vents[0].GetOxygenLevel() == 0.0 ||  _tanks[0].GetOxygenLevel() == 1.0)
 		
 		if(nextState)
 		{
+			_lastAction = DateTime.Now;
 			_state = AirlockState.Depressurized;
 		}
 	}
@@ -192,8 +216,10 @@ public class Airlock
 	{
 		DebugPrint("Depressurized", SpaceEngineers.Echo);
 		bool nextState = false;
+				
 		foreach(var door in _exteriorDoors)
 		{
+			door.ApplyAction(IMyTerminalBlockActions.On);
 			if(door.OpenRatio > 0.0)
 			{
 				nextState = true;
@@ -207,6 +233,7 @@ public class Airlock
 		
 		if(nextState)
 		{
+			_lastAction = DateTime.Now;
 			_state = AirlockState.Open;
 		}
 	}
